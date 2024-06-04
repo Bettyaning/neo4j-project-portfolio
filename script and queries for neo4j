@@ -1,0 +1,146 @@
+// create the graph database//
+
+LOAD CSV WITH HEADERS FROM "file:///epl_mataches.csv" AS row
+MERGE (team1:Team {name: row.Team1})
+MERGE (team2:Team {name: row.Team2})
+
+//create matches nodes//
+
+LOAD CSV WITH HEADERS FROM "file:///epl_mataches.csv" AS row
+CREATE (m:Matches {
+round: toInteger(row.Round),
+day: toInteger(split(split(row.Date, " ")[0], "(")[1]),
+month: CASE split(split(row.Date, " ")[2], " ")[0]
+WHEN 'Jan' THEN 1
+WHEN 'Feb' THEN 2
+WHEN 'Mar' THEN 3
+WHEN 'Apr' THEN 4
+WHEN 'May' THEN 5
+WHEN 'Jun' THEN 6
+WHEN 'Jul' THEN 7
+WHEN 'Aug' THEN 8
+WHEN 'Sep' THEN 9
+WHEN 'Oct' THEN 10
+WHEN 'Nov' THEN 11
+WHEN 'Dec' THEN 12
+END,
+year: toInteger(split(row.Date, " ")[3]),
+team1: row.Team1,
+FT_score: row.FT,
+HT_score: row.HT,
+team2: row.Team2
+})
+
+
+//QUERIES//
+//display total number of matches played//
+
+MATCH (m:Matches)
+RETURN count(m) AS numberOfMatches
+
+
+//Display details of all matches involved “Manchester united FC”.//
+
+LOAD CSV WITH HEADERS FROM "file:///epl_mataches.csv" AS row
+WITH row WHERE row.Team1 = "Manchester United FC" OR row.Team2 = "Manchester United FC"
+RETURN row;
+
+//Display all teams that played the epl matches in the season.//
+MATCH (t:Team)
+RETURN t.name
+
+
+//Display the team with the most wins in January//
+//Firstly, create relationships of won, lost and draw – separately run the creation of each relationship//
+
+MATCH (m:Matches)
+WHERE split(m.FT_score, '-')[0] > split(m.FT_score, '-')[1]
+MATCH (team1:Team {name: m.team1}), (team2:Team {name: m.team2})
+WITH m, team1, team2
+MERGE (team1)-[w:WON]->(m)
+MERGE (team2)-[l:LOST]->(m)
+SET w.scoreAtHalfTime = toInteger(split(m.HT_score, '-')[0]),
+w.scoreAtFullTime = toInteger(split(m.FT_score, '-')[0]),
+l.scoreAtHalfTime = toInteger(split(m.HT_score, '-')[1]),
+l.scoreAtFullTime = toInteger(split(m.FT_score, '-')[1])
+
+MATCH (m:Matches)
+WHERE split(m.FT_score, '-')[0] < split(m.FT_score, '-')[1]
+MATCH (team1:Team {name: m.team1}), (team2:Team {name: m.team2})
+WITH m, team1, team2
+MERGE (team1)-[l:LOST]->(m)
+MERGE (team2)-[w:WON]->(m)
+SET l.scoreAtHalfTime = toInteger(split(m.HT_score, '-')[0]),
+l.scoreAtFullTime = toInteger(split(m.FT_score, '-')[0]),
+w.scoreAtHalfTime = toInteger(split(m.HT_score, '-')[1]),
+w.scoreAtFullTime = toInteger(split(m.FT_score, '-')[1])
+
+MATCH (m:Matches)
+WHERE split(m.FT_score, '-')[0] = split(m.FT_score, '-')[1]
+MATCH (team1:Team {name: m.team1}), (team2:Team {name: m.team2})
+WITH m, team1, team2
+MERGE (team1)-[d:DRAW]->(m)
+MERGE (team2)-[d2:DRAW]->(m)
+SET d.scoreAtHalfTime = toInteger(split(m.HT_score, '-')[0]),
+d.scoreAtFullTime = toInteger(split(m.FT_score, '-')[0]),
+d2.scoreAtHalfTime = toInteger(split(m.HT_score, '-')[1]),
+d2.scoreAtFullTime = toInteger(split(m.FT_score, '-')[1])
+
+//Now to display the most the team with the most wins in Jan//
+MATCH (m:Matches)
+WHERE m.month = 1 AND split(m.FT_score, '-')[0] > split(m.FT_score, '-')[1]
+MATCH (team1:Team {name: m.team1})
+RETURN team1.name AS Team, count(team1) AS Wins
+ORDER BY Wins DESC
+LIMIT 1
+
+//Display the top five teams with the best scoring power //
+
+MATCH (team:Team)-[r]-(m:Matches)
+RETURN team.name AS Team, SUM(r.scoreAtFullTime) AS TotalGoals
+ORDER BY TotalGoals DESC
+LIMIT 5
+
+
+//Display the top five teams that have the best winning records//
+
+MATCH (team:Team)-[result:WON]->(:Matches)
+WITH team, COUNT(result) AS Wins
+RETURN team.name AS Team, Wins
+ORDER BY Wins DESC
+LIMIT 5
+
+
+//display the top 5 teams with the worst defending//
+
+MATCH (team:Team)-[r1]->(:Matches)<-[r2]-(team2:Team)
+RETURN team.name, sum(r2.scoreAtFullTime) AS goalsByOppTeam
+ORDER BY goalsByOppTeam DESC
+LIMIT 5
+
+//Display the top five teams with the best half-time result//
+
+MATCH (team:Team)-[result:WON|LOST|DRAW]->(m:Matches)
+WHERE result.scoreAtHalfTime IS NOT NULL
+WITH team, SUM(result.scoreAtHalfTime) AS GoalsScored
+RETURN team.name AS Team, GoalsScored
+ORDER BY GoalsScored DESC
+LIMIT 5
+
+//display the team with the most loss//
+
+MATCH (team:Team)-[result:LOST]->(m:Matches)
+RETURN team.name AS Team, COUNT(result) AS Losses
+ORDER BY Losses DESC
+LIMIT 5
+
+
+//display the team with the most consecutive wins//
+
+MATCH (team:Team)-[:WON]->(m1:Matches)
+WHERE NOT (team)-[:LOST]->(:Matches {round: m1.round + 1}) AND NOT (team)-[:DRAW]->(:Matches {round: m1.round + 1})
+WITH team, count(m1) AS consecutiveWins
+RETURN team.name AS Team, max(consecutiveWins) AS MaxConsecutiveWins
+ORDER BY MaxConsecutiveWins DESC
+LIMIT 1
+
